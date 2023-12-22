@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import sys
 import hmac
 import hashlib
 import base64
@@ -8,17 +7,11 @@ import json
 import threading
 import websocket
 import uuid
-import urllib
-from common.log import logger
+from ..common.log import logger
+from ..common.utils import is_python3
 
 
-def is_python3():
-    if sys.version > '3':
-        return True
-    return False
-
-
-#实时识别语音使用
+# 实时识别语音使用
 class SpeechRecognitionListener():
     '''
     reponse:  
@@ -76,7 +69,8 @@ FINAL = 3
 ERROR = 4
 CLOSED = 5
 
-#实时识别语音使用
+
+# 实时识别语音使用
 class SpeechRecognizer:
 
     def __init__(self, appid, credential, engine_model_type, listener):
@@ -210,7 +204,7 @@ class SpeechRecognizer:
         return query_arr
 
     def stop(self):
-        if self.status == OPENED: 
+        if self.status == OPENED:
             msg = {}
             msg['type'] = "end"
             text_str = json.dumps(msg)
@@ -219,13 +213,15 @@ class SpeechRecognizer:
             if self.wst and self.wst.is_alive():
                 self.wst.join()
         self.ws.close()
-        
 
     def write(self, data):
         while self.status == STARTED:
             time.sleep(0.1)
-        if self.status == OPENED: 
+        if self.status == OPENED:
             self.ws.sock.send_binary(data)
+
+    def is_started(self):
+        return self.status == STARTED or self.status == OPENED
 
     def start(self):
         def on_message(ws, message):
@@ -240,7 +236,7 @@ class SpeechRecognizer:
                 self.status = FINAL
                 self.result = message
                 self.listener.on_recognition_complete(response)
-                logger.info("%s recognition complete" % response['voice_id'])
+                logger.debug("%s recognition complete" % response['voice_id'])
                 return
             if "result" in response.keys():
                 if response["result"]['slice_type'] == 0:
@@ -254,7 +250,7 @@ class SpeechRecognizer:
                     return
 
         def on_error(ws, error):
-            if self.status == FINAL :
+            if self.status == FINAL:
                 return
             logger.error("websocket error %s  voice id %s" %
                          (format(error), self.voice_id))
@@ -262,8 +258,8 @@ class SpeechRecognizer:
 
         def on_close(ws):
             self.status = CLOSED
-            logger.info("websocket closed  voice id %s" %
-                          self.voice_id)
+            logger.debug("websocket closed  voice id %s" %
+                         self.voice_id)
 
         def on_open(ws):
             self.status = OPENED
@@ -278,12 +274,13 @@ class SpeechRecognizer:
         autho = self.sign(signstr, self.credential.secret_key)
         requrl = self.create_query_string(query)
         if is_python3():
-            autho = urllib.parse.quote(autho)
+            from urllib.parse import quote
         else:
-            autho = urllib.quote(autho)
+            from urllib import quote
+        autho = quote(autho)
         requrl += "&signature=%s" % autho
-        self.ws = websocket.WebSocketApp(requrl,  None,
-                on_error=on_error, on_close=on_close, on_message=on_message)
+        self.ws = websocket.WebSocketApp(requrl, None,
+                                         on_error=on_error, on_close=on_close, on_message=on_message)
         self.ws.on_open = on_open
         self.wst = threading.Thread(target=self.ws.run_forever)
         self.wst.daemon = True
@@ -292,4 +289,4 @@ class SpeechRecognizer:
         response = {}
         response['voice_id'] = self.voice_id
         self.listener.on_recognition_start(response)
-        logger.info("%s recognition start" % response['voice_id'])
+        logger.debug("%s recognition start" % response['voice_id'])

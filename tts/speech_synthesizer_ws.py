@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import sys
 import hmac
 import hashlib
 import base64
@@ -9,8 +8,7 @@ import threading
 from websocket import ABNF, WebSocketApp
 import uuid
 import urllib
-from common.log import logger
-
+from ..common.log import logger
 
 _PROTOCOL = "wss://"
 _HOST = "tts.cloud.tencent.com"
@@ -21,14 +19,15 @@ _ACTION = "TextToStreamAudioWS"
 class SpeechSynthesisListener(object):
     '''
     '''
+
     def on_synthesis_start(self, session_id):
-        logger.info("on_synthesis_start: session_id={}".format(session_id))
+        logger.debug("on_synthesis_start: session_id={}".format(session_id))
 
     def on_synthesis_end(self):
-        logger.info("on_synthesis_end: -")
+        logger.debug("on_synthesis_end: -")
 
     def on_audio_result(self, audio_bytes):
-        logger.info("on_audio_result: recv audio bytes, len={}".format(len(audio_bytes)))
+        logger.debug("on_audio_result: recv audio bytes, len={}".format(len(audio_bytes)))
 
     def on_text_result(self, response):
         session_id = response["session_id"]
@@ -38,7 +37,7 @@ class SpeechSynthesisListener(object):
         subtitles = []
         if "subtitles" in result and len(result["subtitles"]) > 0:
             subtitles = result["subtitles"]
-        logger.info("on_text_result: session_id={} request_id={} message_id={}\nsubtitles={}".format(
+        logger.debug("on_text_result: session_id={} request_id={} message_id={}\nsubtitles={}".format(
             session_id, request_id, message_id, subtitles))
 
     def on_synthesis_fail(self, response):
@@ -90,7 +89,7 @@ class SpeechSynthesizer:
 
     def set_volume(self, volume):
         self.volume = volume
-    
+
     def set_text(self, text):
         self.text = text
 
@@ -99,7 +98,7 @@ class SpeechSynthesizer:
 
     def set_emotion_category(self, emotion_category):
         self.emotion_category = emotion_category
-    
+
     def set_emotion_intensity(self, emotion_intensity):
         self.emotion_intensity = emotion_intensity
 
@@ -109,7 +108,7 @@ class SpeechSynthesizer:
         for key in sort_dict:
             sign_str = sign_str + key + "=" + str(params[key]) + '&'
         sign_str = sign_str[:-1]
-        logger.info("sign_url={}".format(sign_str))
+        logger.debug("sign_url={}".format(sign_str))
         secret_key = self.credential.secret_key.encode('utf-8')
         sign_str = sign_str.encode('utf-8')
         hmacstr = hmac.new(secret_key, sign_str, hashlib.sha1).digest()
@@ -145,7 +144,7 @@ class SpeechSynthesizer:
 
     def __create_query_string(self, param):
         param['Text'] = urllib.parse.quote(param['Text'])
-        
+
         param = sorted(param.items(), key=lambda d: d[0])
 
         url = _PROTOCOL + _HOST + _PATH
@@ -162,22 +161,22 @@ class SpeechSynthesizer:
         return signstr
 
     def start(self):
-        logger.info("synthesizer start: begin")
+        logger.debug("synthesizer start: begin")
 
         def _close_conn(reason):
             ta = time.time()
             self.ws.close()
             tb = time.time()
-            logger.info("client has closed connection ({}), cost {} ms".format(reason, int((tb-ta)*1000)))
+            logger.debug("client has closed connection ({}), cost {} ms".format(reason, int((tb - ta) * 1000)))
 
         def _on_data(ws, data, opcode, flag):
             # NOTE print all message that client received
-            # logger.info("data={} opcode={} flag={}".format(data, opcode, flag))
+            logger.debug("data={} opcode={} flag={}".format(data, opcode, flag))
             if opcode == ABNF.OPCODE_BINARY:
-                self.listener.on_audio_result(data) # <class 'bytes'>
+                self.listener.on_audio_result(data)  # <class 'bytes'>
                 pass
             elif opcode == ABNF.OPCODE_TEXT:
-                resp = json.loads(data) # WSResponseMessage
+                resp = json.loads(data)  # WSResponseMessage
                 if resp['code'] != 0:
                     logger.error("server synthesis fail request_id={} code={} msg={}".format(
                         resp['request_id'], resp['code'], resp['message']
@@ -185,7 +184,7 @@ class SpeechSynthesizer:
                     self.listener.on_synthesis_fail(resp)
                     return
                 if "final" in resp and resp['final'] == 1:
-                    logger.info("recv FINAL frame")
+                    logger.debug("recv FINAL frame")
                     self.status = FINAL
                     _close_conn("after recv final")
                     self.listener.on_synthesis_end()
@@ -205,13 +204,13 @@ class SpeechSynthesizer:
             _close_conn("after recv error")
 
         def _on_close(ws, close_status_code, close_msg):
-            logger.info("conn closed, close_status_code={} close_msg={}".format(close_status_code, close_msg))
+            logger.debug("conn closed, close_status_code={} close_msg={}".format(close_status_code, close_msg))
             self.status = CLOSED
 
         def _on_open(ws):
-            logger.info("conn opened")
+            logger.debug("conn opened")
             self.status = OPENED
-            
+
         session_id = str(uuid.uuid1())
         params = self.__gen_params(session_id)
         signature = self.__gen_signature(params)
@@ -219,24 +218,30 @@ class SpeechSynthesizer:
 
         autho = urllib.parse.quote(signature)
         requrl += "&Signature=%s" % autho
-        logger.info("req_url={}".format(requrl))
+        logger.debug("req_url={}".format(requrl))
 
         self.ws = WebSocketApp(requrl, None,
-            on_error=_on_error, on_close=_on_close,
-            on_data=_on_data)
+                               on_error=_on_error, on_close=_on_close,
+                               on_data=_on_data)
         self.ws.on_open = _on_open
-        
+
         self.wst = threading.Thread(target=self.ws.run_forever)
         self.wst.daemon = True
         self.wst.start()
         self.status = STARTED
         self.listener.on_synthesis_start(session_id)
-        
-        logger.info("synthesizer start: end")
+
+        logger.debug("synthesizer start: end")
+
+    def stop(self):
+        logger.debug("synthesizer: stop any current websocket app")
+        if self.ws:
+            self.ws.close()
+            self.ws = None
 
     def wait(self):
-        logger.info("synthesizer wait: begin")
+        logger.debug("synthesizer wait: begin")
         if self.ws:
             if self.wst and self.wst.is_alive():
                 self.wst.join()
-        logger.info("synthesizer wait: end")
+        logger.debug("synthesizer wait: end")
